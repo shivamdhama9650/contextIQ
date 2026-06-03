@@ -3,7 +3,7 @@
 import { FileUp, Loader2 } from "lucide-react";
 import { useState } from "react";
 
-import { createClient } from "@/lib/supabase/browser";
+import { formatApiError } from "@/lib/api/errors";
 
 const categories = [
   { label: "General", value: "general" },
@@ -14,7 +14,6 @@ const categories = [
   { label: "Technical", value: "technical" }
 ];
 
-const DOCUMENT_BUCKET = "company-documents";
 const MAX_UPLOAD_BYTES = 10 * 1024 * 1024;
 
 type UploadState = {
@@ -54,67 +53,29 @@ export function UploadDocumentForm() {
 
     setUploadState({ status: "uploading", message: null });
 
-    const supabase = createClient();
-    const {
-      data: { session }
-    } = await supabase.auth.getSession();
+    const formData = new FormData();
+    formData.append("file", selectedFile);
+    formData.append("category", category);
 
-    if (!session?.access_token) {
-      setUploadState({
-        status: "error",
-        message: "Your session is missing. Sign in again before uploading."
-      });
-      return;
+    if (description.trim()) {
+      formData.append("description", description.trim());
     }
 
-    const documentId = crypto.randomUUID();
-    const filename = sanitizeFilename(selectedFile.name || "document.pdf");
-    const storagePath = `${session.user.id}/${documentId}/${filename}`;
-    const checksum = await sha256Hex(selectedFile);
-    const title =
-      filename
-        .replace(/\.pdf$/i, "")
-        .replaceAll("-", " ")
-        .replaceAll("_", " ")
-        .trim() || "Uploaded document";
-
-    const { error: uploadError } = await supabase.storage
-      .from(DOCUMENT_BUCKET)
-      .upload(storagePath, selectedFile, {
-        contentType: "application/pdf",
-        upsert: false
-      });
-
-    if (uploadError) {
-      setUploadState({
-        status: "error",
-        message: uploadError.message
-      });
-      return;
-    }
-
-    const { error: insertError } = await supabase.from("documents").insert({
-      id: documentId,
-      owner_id: session.user.id,
-      title,
-      description: description.trim() || null,
-      category,
-      storage_bucket: DOCUMENT_BUCKET,
-      storage_path: storagePath,
-      mime_type: "application/pdf",
-      file_size_bytes: selectedFile.size,
-      checksum_sha256: checksum,
-      status: "uploaded"
+    const response = await fetch("/api/documents/upload", {
+      method: "POST",
+      body: formData
     });
+    const responseBody = await response.json().catch(() => null);
 
-    if (insertError) {
-      await supabase.storage.from(DOCUMENT_BUCKET).remove([storagePath]);
+    if (!response.ok) {
       setUploadState({
         status: "error",
-        message: insertError.message
+        message: formatApiError(responseBody, "Upload failed.")
       });
       return;
     }
+
+    const documentId = responseBody?.document?.id;
 
     setSelectedFile(null);
     setFileInputKey((current) => current + 1);
@@ -122,13 +83,16 @@ export function UploadDocumentForm() {
     setUploadState({
       status: "success",
       message:
+        responseBody?.message ??
         "Document uploaded instantly. Processing has started; refresh My Documents in a moment."
     });
 
-    void fetch(`/api/documents/${documentId}/parse`, {
-      method: "POST",
-      keepalive: true
-    });
+    if (documentId) {
+      void fetch(`/api/documents/${documentId}/parse`, {
+        method: "POST",
+        keepalive: true
+      });
+    }
   }
 
   return (
@@ -229,25 +193,4 @@ async function validatePdf(file: File): Promise<string | null> {
   }
 
   return null;
-}
-
-function sanitizeFilename(filename: string): string {
-  const cleanName = filename
-    .trim()
-    .replace(/[^A-Za-z0-9._-]+/g, "-")
-    .replace(/-{2,}/g, "-")
-    .replace(/^[.-]+|[.-]+$/g, "");
-
-  if (!cleanName) {
-    return "document.pdf";
-  }
-
-  return cleanName.toLowerCase().endsWith(".pdf") ? cleanName : `${cleanName}.pdf`;
-}
-
-async function sha256Hex(file: File): Promise<string> {
-  const digest = await crypto.subtle.digest("SHA-256", await file.arrayBuffer());
-  return Array.from(new Uint8Array(digest))
-    .map((byte) => byte.toString(16).padStart(2, "0"))
-    .join("");
 }
