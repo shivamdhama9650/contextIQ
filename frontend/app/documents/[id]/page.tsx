@@ -1,7 +1,13 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
 
-import { fetchDocumentDetail, formatDocumentStatus, statusBadgeClass } from "@/lib/api/documents";
+import {
+  type DocumentChunkRecord,
+  type DocumentPageRecord,
+  type DocumentRecord,
+  formatDocumentStatus,
+  statusBadgeClass
+} from "@/lib/api/documents";
 import { createClient } from "@/lib/supabase/server";
 
 import { ReparseDocumentButton } from "../reparse-document-button";
@@ -21,24 +27,60 @@ export default async function DocumentDetailPage({ params }: Props) {
     redirect("/auth/login");
   }
 
-  const {
-    data: { session }
-  } = await supabase.auth.getSession();
-
-  if (!session?.access_token) {
-    redirect("/auth/login");
-  }
-
-  let detail = null;
+  let document: DocumentRecord | null = null;
+  let pages: DocumentPageRecord[] = [];
+  let chunks: DocumentChunkRecord[] = [];
+  let embeddingCount = 0;
   let loadError: string | null = null;
 
-  try {
-    detail = await fetchDocumentDetail(session.access_token, id);
-  } catch {
-    loadError = "Could not load this document. It may not exist or the backend is offline.";
+  const { data: documentData, error: documentError } = await supabase
+    .from("documents")
+    .select(
+      "id, owner_id, title, description, category, storage_bucket, storage_path, mime_type, file_size_bytes, checksum_sha256, status, error_message, uploaded_at, updated_at"
+    )
+    .eq("id", id)
+    .maybeSingle();
+
+  if (documentError) {
+    loadError = documentError.message;
+  } else if (!documentData) {
+    loadError = "This document does not exist, or your account does not have access to it.";
+  } else {
+    document = documentData as DocumentRecord;
+
+    const [pagesResult, chunksResult, embeddingsResult] = await Promise.all([
+      supabase
+        .from("document_pages")
+        .select("id, document_id, page_number, text_content, metadata, created_at")
+        .eq("document_id", id)
+        .order("page_number", { ascending: true }),
+      supabase
+        .from("document_chunks")
+        .select(
+          "id, document_id, page_id, chunk_index, content, token_count, page_start, page_end, metadata, created_at"
+        )
+        .eq("document_id", id)
+        .order("chunk_index", { ascending: true })
+        .limit(20),
+      supabase
+        .from("chunk_embeddings")
+        .select("id", { count: "exact", head: true })
+        .eq("document_id", id)
+    ]);
+
+    if (pagesResult.error) {
+      loadError = pagesResult.error.message;
+    } else if (chunksResult.error) {
+      loadError = chunksResult.error.message;
+    } else if (embeddingsResult.error) {
+      loadError = embeddingsResult.error.message;
+    } else {
+      pages = (pagesResult.data ?? []) as DocumentPageRecord[];
+      chunks = (chunksResult.data ?? []) as DocumentChunkRecord[];
+      embeddingCount = embeddingsResult.count ?? 0;
+    }
   }
 
-  const document = detail?.document;
   const showParseButton =
     document?.status === "uploaded" ||
     document?.status === "failed" ||
@@ -70,26 +112,21 @@ export default async function DocumentDetailPage({ params }: Props) {
                 {formatDocumentStatus(document.status)}
               </span>
               <span className="text-sm capitalize text-slate-600">{document.category}</span>
-              <span className="text-sm text-slate-600">
-                {detail?.page_count ?? 0} page(s)
-              </span>
-              <span className="text-sm text-slate-600">
-                {detail?.chunk_count ?? 0} chunk(s)
-              </span>
-              <span className="text-sm text-slate-600">
-                {detail?.embedding_count ?? 0} embedding(s)
-              </span>
-              <span className="text-sm text-slate-600">
-                {detail?.vector_count ?? 0} indexed vector(s)
-              </span>
-              {detail?.embedding_model ? (
-                <span className="text-xs text-slate-500">{detail.embedding_model}</span>
-              ) : null}
+              <span className="text-sm text-slate-600">{pages.length} page(s)</span>
+              <span className="text-sm text-slate-600">{chunks.length} chunk preview(s)</span>
+              <span className="text-sm text-slate-600">{embeddingCount} embedding(s)</span>
             </div>
 
             {document.error_message ? (
               <p className="mt-4 rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
                 {document.error_message}
+              </p>
+            ) : null}
+
+            {document.status === "uploaded" ? (
+              <p className="mt-4 rounded-md border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-800">
+                This file was uploaded successfully. Run parsing to extract pages, create chunks,
+                and make it searchable in chat.
               </p>
             ) : null}
 
@@ -102,14 +139,14 @@ export default async function DocumentDetailPage({ params }: Props) {
               </div>
             ) : null}
 
-            {detail?.chunks.length ? (
+            {chunks.length ? (
               <div className="mt-8">
                 <h2 className="text-lg font-semibold">Search chunks (preview)</h2>
                 <p className="mt-1 text-sm text-slate-600">
                   Text chunks are embedded and indexed for semantic search.
                 </p>
                 <div className="mt-4 space-y-3">
-                  {detail.chunks.map((chunk) => (
+                  {chunks.map((chunk) => (
                     <article
                       className="rounded-lg border border-slate-200 bg-slate-50 p-4"
                       key={chunk.id}
@@ -117,9 +154,9 @@ export default async function DocumentDetailPage({ params }: Props) {
                       <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
                         Chunk {chunk.chunk_index + 1}
                         {chunk.page_start
-                          ? ` · page ${chunk.page_start}${chunk.page_end && chunk.page_end !== chunk.page_start ? `–${chunk.page_end}` : ""}`
+                          ? ` - page ${chunk.page_start}${chunk.page_end && chunk.page_end !== chunk.page_start ? `-${chunk.page_end}` : ""}`
                           : ""}
-                        {chunk.token_count ? ` · ~${chunk.token_count} tokens` : ""}
+                        {chunk.token_count ? ` - ~${chunk.token_count} tokens` : ""}
                       </p>
                       <p className="mt-2 line-clamp-4 whitespace-pre-wrap text-sm text-slate-700">
                         {chunk.content}
@@ -132,8 +169,8 @@ export default async function DocumentDetailPage({ params }: Props) {
 
             <div className="mt-8 space-y-4">
               <h2 className="text-lg font-semibold">Full pages</h2>
-              {detail?.pages.length ? (
-                detail.pages.map((page) => (
+              {pages.length ? (
+                pages.map((page) => (
                   <article
                     className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm"
                     key={page.id}
@@ -150,7 +187,9 @@ export default async function DocumentDetailPage({ params }: Props) {
                 ))
               ) : (
                 <p className="rounded-lg border border-dashed border-slate-300 bg-white p-6 text-sm text-slate-600">
-                  No page text stored yet. Use &quot;Run parsing&quot; to process this document.
+                  No page text is stored yet. If this document was just uploaded, use
+                  &quot;Run parsing&quot; to extract readable PDF text. If parsing already failed,
+                  the PDF may be scanned or image-only and may need OCR in a later phase.
                 </p>
               )}
             </div>
