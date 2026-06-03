@@ -11,6 +11,7 @@ import {
   formatFileSize,
   statusBadgeClass
 } from "@/lib/api/documents";
+import { createClient } from "@/lib/supabase/browser";
 
 type LoadState = {
   documents: DocumentRecord[];
@@ -29,22 +30,40 @@ export function DocumentsList() {
     setState((current) => ({ ...current, error: null, isLoading: true }));
 
     try {
-      const response = await fetch("/api/documents", {
-        cache: "no-store"
-      });
-      const body = await response.json().catch(() => null);
+      const supabase = createClient();
+      const {
+        data: { user },
+        error: userError
+      } = await supabase.auth.getUser();
 
-      if (!response.ok) {
+      if (userError || !user) {
         setState({
           documents: [],
-          error: formatApiError(body, "Could not load your documents."),
+          error: "Your session has expired. Please sign in again.",
+          isLoading: false
+        });
+        return;
+      }
+
+      const { data, error } = await supabase
+        .from("documents")
+        .select(
+          "id, owner_id, title, description, category, storage_bucket, storage_path, mime_type, file_size_bytes, checksum_sha256, status, error_message, uploaded_at, updated_at"
+        )
+        .eq("owner_id", user.id)
+        .order("uploaded_at", { ascending: false });
+
+      if (error) {
+        setState({
+          documents: [],
+          error: formatApiError({ detail: error.message }, "Could not load your documents."),
           isLoading: false
         });
         return;
       }
 
       setState({
-        documents: Array.isArray(body) ? body : [],
+        documents: (data ?? []) as DocumentRecord[],
         error: null,
         isLoading: false
       });
