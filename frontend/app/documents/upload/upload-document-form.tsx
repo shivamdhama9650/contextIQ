@@ -3,7 +3,6 @@
 import { FileUp, Loader2 } from "lucide-react";
 import { useState } from "react";
 
-import { formatApiError } from "@/lib/api/errors";
 import { createClient } from "@/lib/supabase/browser";
 
 const categories = [
@@ -15,6 +14,9 @@ const categories = [
   { label: "Technical", value: "technical" }
 ];
 
+const DOCUMENT_BUCKET = "company-documents";
+const MAX_UPLOAD_BYTES = 10 * 1024 * 1024;
+
 type UploadState = {
   status: "idle" | "uploading" | "success" | "error";
   message: string | null;
@@ -22,6 +24,7 @@ type UploadState = {
 
 export function UploadDocumentForm() {
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [fileInputKey, setFileInputKey] = useState(0);
   const [category, setCategory] = useState("general");
   const [description, setDescription] = useState("");
   const [uploadState, setUploadState] = useState<UploadState>({
@@ -36,6 +39,15 @@ export function UploadDocumentForm() {
       setUploadState({
         status: "error",
         message: "Choose a PDF file before uploading."
+      });
+      return;
+    }
+
+    const validationError = await validatePdf(selectedFile);
+    if (validationError) {
+      setUploadState({
+        status: "error",
+        message: validationError
       });
       return;
     }
@@ -55,46 +67,67 @@ export function UploadDocumentForm() {
       return;
     }
 
-    const formData = new FormData();
-    formData.append("file", selectedFile);
-    formData.append("category", category);
+    const documentId = crypto.randomUUID();
+    const filename = sanitizeFilename(selectedFile.name || "document.pdf");
+    const storagePath = `${session.user.id}/${documentId}/${filename}`;
+    const checksum = await sha256Hex(selectedFile);
+    const title =
+      filename
+        .replace(/\.pdf$/i, "")
+        .replaceAll("-", " ")
+        .replaceAll("_", " ")
+        .trim() || "Uploaded document";
 
-    if (description.trim()) {
-      formData.append("description", description.trim());
-    }
-
-    let response: Response;
-
-    try {
-      // Same-origin proxy avoids browser CORS issues with localhost vs 127.0.0.1
-      response = await fetch("/api/documents/upload", {
-        method: "POST",
-        body: formData
+    const { error: uploadError } = await supabase.storage
+      .from(DOCUMENT_BUCKET)
+      .upload(storagePath, selectedFile, {
+        contentType: "application/pdf",
+        upsert: false
       });
-    } catch {
+
+    if (uploadError) {
       setUploadState({
         status: "error",
-        message:
-          "Upload request failed. Make sure the frontend and backend are both running."
+        message: uploadError.message
       });
       return;
     }
 
-    const responseBody = await response.json().catch(() => null);
+    const { error: insertError } = await supabase.from("documents").insert({
+      id: documentId,
+      owner_id: session.user.id,
+      title,
+      description: description.trim() || null,
+      category,
+      storage_bucket: DOCUMENT_BUCKET,
+      storage_path: storagePath,
+      mime_type: "application/pdf",
+      file_size_bytes: selectedFile.size,
+      checksum_sha256: checksum,
+      status: "uploaded"
+    });
 
-    if (!response.ok) {
+    if (insertError) {
+      await supabase.storage.from(DOCUMENT_BUCKET).remove([storagePath]);
       setUploadState({
         status: "error",
-        message: formatApiError(responseBody, "Upload failed.")
+        message: insertError.message
       });
       return;
     }
 
     setSelectedFile(null);
+    setFileInputKey((current) => current + 1);
     setDescription("");
     setUploadState({
       status: "success",
-      message: responseBody?.message ?? "Document uploaded successfully."
+      message:
+        "Document uploaded instantly. Processing has started; refresh My Documents in a moment."
+    });
+
+    void fetch(`/api/documents/${documentId}/parse`, {
+      method: "POST",
+      keepalive: true
     });
   }
 
@@ -110,6 +143,7 @@ export function UploadDocumentForm() {
         accept="application/pdf,.pdf"
         className="mt-2 block w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm file:mr-4 file:rounded-md file:border-0 file:bg-accent file:px-4 file:py-2 file:text-sm file:font-semibold file:text-white"
         id="file"
+        key={fileInputKey}
         onChange={(event) => setSelectedFile(event.target.files?.[0] ?? null)}
         type="file"
       />
@@ -151,7 +185,7 @@ export function UploadDocumentForm() {
         ) : (
           <FileUp aria-hidden="true" size={18} />
         )}
-        {uploadState.status === "uploading" ? "Uploading PDF..." : "Upload PDF"}
+        {uploadState.status === "uploading" ? "Uploading to Supabase..." : "Upload PDF"}
       </button>
 
       {uploadState.message ? (
@@ -167,4 +201,53 @@ export function UploadDocumentForm() {
       ) : null}
     </form>
   );
+}
+
+async function validatePdf(file: File): Promise<string | null> {
+  if (!file.name.toLowerCase().endsWith(".pdf")) {
+    return "Only PDF files are supported.";
+  }
+
+  if (file.type && file.type !== "application/pdf") {
+    return "File must use application/pdf content type.";
+  }
+
+  if (file.size === 0) {
+    return "Uploaded file is empty.";
+  }
+
+  if (file.size > MAX_UPLOAD_BYTES) {
+    return "File size exceeds the 10 MB upload limit.";
+  }
+
+  const header = new Uint8Array(await file.slice(0, 4).arrayBuffer());
+  const looksLikePdf =
+    header[0] === 0x25 && header[1] === 0x50 && header[2] === 0x44 && header[3] === 0x46;
+
+  if (!looksLikePdf) {
+    return "Uploaded file does not look like a valid PDF.";
+  }
+
+  return null;
+}
+
+function sanitizeFilename(filename: string): string {
+  const cleanName = filename
+    .trim()
+    .replace(/[^A-Za-z0-9._-]+/g, "-")
+    .replace(/-{2,}/g, "-")
+    .replace(/^[.-]+|[.-]+$/g, "");
+
+  if (!cleanName) {
+    return "document.pdf";
+  }
+
+  return cleanName.toLowerCase().endsWith(".pdf") ? cleanName : `${cleanName}.pdf`;
+}
+
+async function sha256Hex(file: File): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-256", await file.arrayBuffer());
+  return Array.from(new Uint8Array(digest))
+    .map((byte) => byte.toString(16).padStart(2, "0"))
+    .join("");
 }
