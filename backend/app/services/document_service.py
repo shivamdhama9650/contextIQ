@@ -46,6 +46,8 @@ class DocumentUploadService:
         category: DocumentCategory,
         current_user: AuthenticatedUser,
         description: str | None = None,
+        *,
+        process_immediately: bool = True,
     ) -> UploadResult:
         self._ensure_user_profile(current_user)
 
@@ -103,10 +105,15 @@ class DocumentUploadService:
             },
         )
 
-        parsed_document = self.parsing_service.parse_and_persist(record, content)
-        message = self._upload_message(parsed_document)
+        if process_immediately:
+            parsed_document = self.parsing_service.parse_and_persist(record, content)
+            message = self._upload_message(parsed_document)
+            return UploadResult(document=parsed_document, message=message)
 
-        return UploadResult(document=parsed_document, message=message)
+        return UploadResult(
+            document=DocumentResponse.model_validate(record),
+            message="Document uploaded successfully. Processing has started in the background.",
+        )
 
     def list_my_documents(self, current_user: AuthenticatedUser) -> list[DocumentResponse]:
         self._ensure_user_profile(current_user)

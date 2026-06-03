@@ -151,7 +151,7 @@ export function UploadDocumentForm() {
         ) : (
           <FileUp aria-hidden="true" size={18} />
         )}
-        {uploadState.status === "uploading" ? "Uploading..." : "Upload PDF"}
+        {uploadState.status === "uploading" ? "Uploading PDF..." : "Upload PDF"}
       </button>
 
       {uploadState.message ? (
@@ -168,4 +168,3 @@ export function UploadDocumentForm() {
     </form>
   );
 }
-
