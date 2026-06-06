@@ -134,6 +134,23 @@ npm.cmd run type-check
 npm.cmd run build
 ```
 
+## Deployment Performance Notes
+
+Document upload is intentionally fast: the PDF is stored first, then parsing, chunking,
+embedding generation, and Chroma indexing run as processing work.
+
+On free Render instances, the first processing request can still be slow because:
+
+- the service may spin down when idle and needs a cold start
+- SentenceTransformers must load the embedding model into memory
+- CPU-only embedding generation is slower than a local warmed machine
+- scanned/image-only PDFs need OCR, which is not enabled yet
+
+The Render build preloads the configured SentenceTransformers model, and the backend
+reuses the embedding encoder in memory while the service is warm. For faster production
+processing, use an always-on Render instance or move ingestion to a dedicated worker
+queue with persistent storage.
+
 ## Notes
 
 Architecture learning notes are stored in `docs/architecture/`. Those files preserve the step-by-step build history, while the app UI is kept product-facing for employees and admins.

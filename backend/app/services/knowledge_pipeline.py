@@ -1,3 +1,4 @@
+from functools import lru_cache
 from pathlib import Path
 
 from supabase import Client
@@ -19,6 +20,7 @@ from app.services.semantic_search_service import SemanticSearchService
 from app.vector.chroma_store import ChromaVectorStore
 
 
+@lru_cache(maxsize=1)
 def _chroma_store() -> ChromaVectorStore:
     persist_dir = str(Path(settings.chroma_persist_dir).resolve())
     return ChromaVectorStore(
@@ -27,6 +29,7 @@ def _chroma_store() -> ChromaVectorStore:
     )
 
 
+@lru_cache(maxsize=1)
 def build_embedding_encoder() -> SentenceEmbeddingService:
     return SentenceEmbeddingService(
         settings.embedding_model_name,
