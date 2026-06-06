@@ -23,7 +23,7 @@ export function ReparseDocumentButton({ documentId, label = "Parse PDF" }: Props
     setIsError(false);
 
     try {
-      const response = await fetch(`/api/documents/${documentId}/parse`, {
+      const response = await fetch(`/api/documents/${documentId}/process`, {
         method: "POST"
       });
       const body = await response.json().catch(() => null);
@@ -35,8 +35,8 @@ export function ReparseDocumentButton({ documentId, label = "Parse PDF" }: Props
         return;
       }
 
-      setMessage(body?.message ?? "Parsing complete.");
-      setIsError(body?.document?.status === "failed");
+      setMessage(body?.message ?? "Processing started.");
+      setIsError(false);
       router.refresh();
     } catch {
       setMessage("Parsing request failed. Is the backend running on port 8000?");

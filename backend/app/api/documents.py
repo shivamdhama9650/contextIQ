@@ -1,7 +1,16 @@
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, File, Form, UploadFile
+from fastapi import (
+    APIRouter,
+    BackgroundTasks,
+    Depends,
+    File,
+    Form,
+    HTTPException,
+    UploadFile,
+    status,
+)
 
 from app.core.auth import AuthenticatedUser, get_current_user
 from app.core.config import settings
@@ -17,6 +26,7 @@ from app.schemas.document import (
     DocumentEmbedResponse,
     DocumentPageResponse,
     DocumentParseResponse,
+    DocumentProcessResponse,
     DocumentReprocessItem,
     DocumentReprocessResponse,
     DocumentResponse,
@@ -220,3 +230,42 @@ def parse_document(
         else document.error_message or "Document processing failed."
     )
     return DocumentParseResponse(document=document, message=message)
+
+
+@router.post("/{document_id}/process", response_model=DocumentProcessResponse, status_code=202)
+def process_document_async(
+    document_id: UUID,
+    background_tasks: BackgroundTasks,
+    current_user: Annotated[AuthenticatedUser, Depends(get_current_user)],
+    parsing_service: Annotated[DocumentParsingService, Depends(get_document_parsing_service)],
+) -> DocumentProcessResponse:
+    document = parsing_service.document_repository.get_for_owner(
+        str(document_id),
+        current_user.id,
+    )
+    if document is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Document not found",
+        )
+
+    if document["status"] == DocumentStatus.ready.value:
+        return DocumentProcessResponse(
+            document_id=document_id,
+            status=DocumentStatus.ready,
+            message="Document is already ready for chat.",
+        )
+
+    if document["status"] != DocumentStatus.processing.value:
+        parsing_service.document_repository.update_status(
+            str(document_id),
+            DocumentStatus.processing,
+            error_message=None,
+        )
+        background_tasks.add_task(parsing_service.reprocess_by_id, str(document_id))
+
+    return DocumentProcessResponse(
+        document_id=document_id,
+        status=DocumentStatus.processing,
+        message="Document processing has started in the background.",
+    )

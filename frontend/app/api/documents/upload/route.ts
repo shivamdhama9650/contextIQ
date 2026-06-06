@@ -84,7 +84,7 @@ export async function POST(request: Request) {
 
   after(async () => {
     try {
-      const response = await fetch(`${env.apiBaseUrl}/documents/${documentId}/parse`, {
+      const response = await fetch(`${env.apiBaseUrl}/documents/${documentId}/process`, {
         method: "POST",
         headers: {
           Authorization: `Bearer ${session.access_token}`

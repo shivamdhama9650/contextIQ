@@ -2,8 +2,6 @@ import logging
 from collections.abc import AsyncGenerator
 from typing import Any
 
-from app.core.config import settings
-from app.embeddings.sentence_embedding_service import SentenceEmbeddingService
 from app.services.semantic_search_service import SearchHit, SemanticSearchService
 
 logger = logging.getLogger(__name__)
@@ -15,10 +13,6 @@ class RAGService:
     def __init__(self, semantic_search_service: SemanticSearchService, llm: Any) -> None:
         self.semantic_search = semantic_search_service
         self.llm = llm
-        self.embedding_service = SentenceEmbeddingService(
-            settings.embedding_model_name,
-            hf_token=settings.hf_token,
-        )
 
     def _build_prompt(self, query: str, chunks: list[dict[str, Any]]) -> str:
         context_parts = []
@@ -94,7 +88,7 @@ class RAGService:
         if owner_id is not None and hasattr(self.semantic_search, "search_for_owner"):
             return self.semantic_search.search_for_owner(query, owner_id, limit=k)
 
-        query_vector = self.embedding_service.embed_texts([query])[0]
+        query_vector = self.semantic_search.embedding_encoder.embed_texts([query])[0]
         return self.semantic_search.search(query_vector, limit=k)
 
     def answer_query(

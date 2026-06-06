@@ -10,6 +10,7 @@ import {
 } from "@/lib/api/documents";
 import { createClient } from "@/lib/supabase/server";
 
+import { AutoProcessDocument } from "./auto-process-document";
 import { ReparseDocumentButton } from "../reparse-document-button";
 
 type Props = {
@@ -81,10 +82,8 @@ export default async function DocumentDetailPage({ params }: Props) {
     }
   }
 
-  const showParseButton =
-    document?.status === "uploaded" ||
-    document?.status === "failed" ||
-    document?.status === "processing";
+  const showAutomaticProcessing =
+    document?.status === "uploaded" || document?.status === "processing";
 
   return (
     <main className="min-h-screen bg-surface px-6 py-10 text-ink">
@@ -125,17 +124,18 @@ export default async function DocumentDetailPage({ params }: Props) {
 
             {document.status === "uploaded" ? (
               <p className="mt-4 rounded-md border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-800">
-                This file was uploaded successfully. Run parsing to extract pages, create chunks,
-                and make it searchable in chat.
+                This file was uploaded successfully. Processing starts automatically, so no manual
+                parsing step is required.
               </p>
             ) : null}
 
-            {showParseButton ? (
+            {showAutomaticProcessing ? (
+              <AutoProcessDocument documentId={document.id} status={document.status} />
+            ) : null}
+
+            {document.status === "failed" ? (
               <div className="mt-6">
-                <ReparseDocumentButton
-                  documentId={document.id}
-                  label={document.status === "failed" ? "Retry parsing" : "Run parsing"}
-                />
+                <ReparseDocumentButton documentId={document.id} label="Retry processing" />
               </div>
             ) : null}
 
@@ -187,9 +187,8 @@ export default async function DocumentDetailPage({ params }: Props) {
                 ))
               ) : (
                 <p className="rounded-lg border border-dashed border-slate-300 bg-white p-6 text-sm text-slate-600">
-                  No page text is stored yet. If this document was just uploaded, use
-                  &quot;Run parsing&quot; to extract readable PDF text. If parsing already failed,
-                  the PDF may be scanned or image-only and may need OCR in a later phase.
+                  No page text is stored yet. Processing starts automatically after upload. If it
+                  fails, the PDF may be scanned or image-only and may need OCR in a later phase.
                 </p>
               )}
             </div>

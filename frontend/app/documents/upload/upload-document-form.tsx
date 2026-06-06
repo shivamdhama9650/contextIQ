@@ -89,6 +89,9 @@ export function UploadDocumentForm() {
     });
 
     if (documentId) {
+      void fetch(`/api/documents/${documentId}/process`, {
+        method: "POST"
+      });
       await waitForDocumentProcessing(documentId, setUploadState);
     }
   }
@@ -184,8 +187,8 @@ async function waitForDocumentProcessing(
   setUploadState: React.Dispatch<React.SetStateAction<UploadState>>
 ) {
   const supabase = createClient();
-  const attempts = 60;
-  const delayMs = 2000;
+  const attempts = 90;
+  const delayMs = 1000;
 
   for (let attempt = 0; attempt < attempts; attempt += 1) {
     await delay(delayMs);

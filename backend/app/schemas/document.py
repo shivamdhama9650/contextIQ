@@ -89,6 +89,12 @@ class DocumentParseResponse(BaseModel):
     message: str
 
 
+class DocumentProcessResponse(BaseModel):
+    document_id: UUID
+    status: DocumentStatus
+    message: str
+
+
 class DocumentReprocessItem(BaseModel):
     document_id: UUID
     title: str
