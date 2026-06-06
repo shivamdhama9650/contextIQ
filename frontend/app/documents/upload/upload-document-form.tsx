@@ -4,6 +4,7 @@ import { FileUp, Loader2 } from "lucide-react";
 import { useState } from "react";
 
 import { formatApiError } from "@/lib/api/errors";
+import { createClient } from "@/lib/supabase/browser";
 
 const categories = [
   { label: "General", value: "general" },
@@ -17,7 +18,7 @@ const categories = [
 const MAX_UPLOAD_BYTES = 10 * 1024 * 1024;
 
 type UploadState = {
-  status: "idle" | "uploading" | "success" | "error";
+  status: "idle" | "uploading" | "processing" | "success" | "error";
   message: string | null;
 };
 
@@ -81,17 +82,14 @@ export function UploadDocumentForm() {
     setFileInputKey((current) => current + 1);
     setDescription("");
     setUploadState({
-      status: "success",
+      status: "processing",
       message:
         responseBody?.message ??
-        "Document uploaded instantly. Processing has started; refresh My Documents in a moment."
+        "Document uploaded. Parsing, chunking, embeddings, and indexing have started."
     });
 
     if (documentId) {
-      void fetch(`/api/documents/${documentId}/parse`, {
-        method: "POST",
-        keepalive: true
-      });
+      await waitForDocumentProcessing(documentId, setUploadState);
     }
   }
 
@@ -141,15 +139,15 @@ export function UploadDocumentForm() {
 
       <button
         className="mt-6 flex items-center justify-center gap-2 rounded-md bg-accent px-5 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-slate-400"
-        disabled={uploadState.status === "uploading"}
+        disabled={uploadState.status === "uploading" || uploadState.status === "processing"}
         type="submit"
       >
-        {uploadState.status === "uploading" ? (
+        {uploadState.status === "uploading" || uploadState.status === "processing" ? (
           <Loader2 aria-hidden="true" className="animate-spin" size={18} />
         ) : (
           <FileUp aria-hidden="true" size={18} />
         )}
-        {uploadState.status === "uploading" ? "Uploading to Supabase..." : "Upload PDF"}
+        {buttonLabel(uploadState.status)}
       </button>
 
       {uploadState.message ? (
@@ -157,6 +155,8 @@ export function UploadDocumentForm() {
           className={`mt-4 rounded-md border px-4 py-3 text-sm ${
             uploadState.status === "success"
               ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+              : uploadState.status === "processing"
+                ? "border-blue-200 bg-blue-50 text-blue-800"
               : "border-red-200 bg-red-50 text-red-700"
           }`}
         >
@@ -165,6 +165,91 @@ export function UploadDocumentForm() {
       ) : null}
     </form>
   );
+}
+
+function buttonLabel(status: UploadState["status"]): string {
+  if (status === "uploading") {
+    return "Uploading to Supabase...";
+  }
+
+  if (status === "processing") {
+    return "Processing document...";
+  }
+
+  return "Upload PDF";
+}
+
+async function waitForDocumentProcessing(
+  documentId: string,
+  setUploadState: React.Dispatch<React.SetStateAction<UploadState>>
+) {
+  const supabase = createClient();
+  const attempts = 60;
+  const delayMs = 2000;
+
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    await delay(delayMs);
+
+    const { data, error } = await supabase
+      .from("documents")
+      .select("status, error_message")
+      .eq("id", documentId)
+      .maybeSingle();
+
+    if (error) {
+      setUploadState({
+        status: "error",
+        message: formatApiError({ detail: error.message }, "Could not check processing status.")
+      });
+      return;
+    }
+
+    if (!data) {
+      setUploadState({
+        status: "error",
+        message: "Uploaded document could not be found."
+      });
+      return;
+    }
+
+    if (data.status === "ready") {
+      setUploadState({
+        status: "success",
+        message: "Document is ready. It has been parsed, chunked, embedded, and indexed for chat."
+      });
+      return;
+    }
+
+    if (data.status === "failed") {
+      setUploadState({
+        status: "error",
+        message:
+          data.error_message ??
+          "Document processing failed. The PDF may be scanned or image-only."
+      });
+      return;
+    }
+
+    setUploadState({
+      status: "processing",
+      message:
+        data.status === "processing"
+          ? "Processing is running: extracting text, chunking, embedding, and indexing."
+          : "Document uploaded. Waiting for the processing worker to start."
+    });
+  }
+
+  setUploadState({
+    status: "processing",
+    message:
+      "Processing is still running in the background. You can open My Documents and refresh status."
+  });
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    window.setTimeout(resolve, ms);
+  });
 }
 
 async function validatePdf(file: File): Promise<string | null> {

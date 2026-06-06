@@ -1,10 +1,14 @@
-import { NextResponse } from "next/server";
+import { after, NextResponse } from "next/server";
 
+import { env } from "@/lib/env";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 
 const DOCUMENT_BUCKET = "company-documents";
 const MAX_UPLOAD_BYTES = 10 * 1024 * 1024;
+
+export const runtime = "nodejs";
+export const maxDuration = 60;
 
 export async function POST(request: Request) {
   const supabase = await createClient();
@@ -78,11 +82,36 @@ export async function POST(request: Request) {
     return NextResponse.json({ detail: insertError.message }, { status: 500 });
   }
 
+  after(async () => {
+    try {
+      const response = await fetch(`${env.apiBaseUrl}/documents/${documentId}/parse`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${session.access_token}`
+        },
+        cache: "no-store"
+      });
+
+      if (!response.ok) {
+        const body = await response.json().catch(() => null);
+        console.error("Automatic document processing failed", {
+          documentId,
+          status: response.status,
+          detail: body?.detail ?? "Unknown backend error"
+        });
+      }
+    } catch (error) {
+      console.error("Automatic document processing request failed", {
+        documentId,
+        error
+      });
+    }
+  });
+
   return NextResponse.json(
     {
       document: data,
-      message:
-        "Document uploaded instantly. Processing has started; refresh My Documents in a moment."
+      message: "Document uploaded. Parsing, chunking, embeddings, and indexing have started."
     },
     { status: 201 }
   );
