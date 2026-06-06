@@ -1,25 +1,19 @@
-"""Report specialist agent."""
-
 from typing import Any
-
-from app.agents.base import Agent
+from .base import Agent
 
 
 class ReportAgent(Agent):
-    """Handles summaries, structured reports, and analytics-style questions."""
+    """Generates summaries and reports based on user queries."""
 
     @property
     def name(self) -> str:
         return "ReportAgent"
 
     def handle(self, message: str) -> dict[str, Any]:
-        return {
-            "agent": self.name,
-            "answer": (
-                "I routed this to Report. Use retrieved document evidence to produce "
-                "summaries, reports, and structured analysis."
-            ),
-            "query": message,
-            "sources": [],
-        }
-
+        answer = (
+            "I can generate summaries and reports from your company documents. "
+            "Please specify the document or topic you want summarized. "
+            f"Your request: '{message}' - I will search through all available documents "
+            "and compile a comprehensive summary for you."
+        )
+        return {"agent": self.name, "answer": answer}

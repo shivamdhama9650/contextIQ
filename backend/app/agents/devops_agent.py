@@ -1,24 +1,19 @@
-"""DevOps specialist agent."""
-
 from typing import Any
-
-from app.agents.base import Agent
+from .base import Agent
 
 
 class DevOpsAgent(Agent):
-    """Handles CI/CD, Docker, Kubernetes, and deployment questions."""
+    """Handles CI/CD, Docker, Kubernetes, and deployment queries."""
 
     @property
     def name(self) -> str:
         return "DevOpsAgent"
 
     def handle(self, message: str) -> dict[str, Any]:
-        return {
-            "agent": self.name,
-            "answer": (
-                "I routed this to DevOps. Use deployment guides, CI/CD runbooks, "
-                "Docker documentation, and Kubernetes SOPs as the source of truth."
-            ),
-            "query": message,
-        }
-
+        answer = (
+            "For CI/CD we use GitHub Actions. Docker images are built with multi-stage builds "
+            "and deployed to a Kubernetes cluster on EKS. "
+            "Use 'kubectl' to manage pods and services. "
+            "Our deployment process: push to main → GitHub Actions builds image → pushes to ECR → deploys to EKS."
+        )
+        return {"agent": self.name, "answer": answer}

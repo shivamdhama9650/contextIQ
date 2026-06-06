@@ -1,7 +1,7 @@
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, UploadFile
+from fastapi import APIRouter, Depends, File, Form, UploadFile
 
 from app.core.auth import AuthenticatedUser, get_current_user
 from app.core.config import settings
@@ -48,7 +48,6 @@ def get_document_parsing_service() -> DocumentParsingService:
 
 @router.post("/upload", response_model=DocumentUploadResponse, status_code=201)
 async def upload_document(
-    background_tasks: BackgroundTasks,
     current_user: Annotated[AuthenticatedUser, Depends(get_current_user)],
     current_profile: Annotated[ProfileResponse, Depends(get_current_profile)],
     service: Annotated[DocumentUploadService, Depends(get_document_upload_service)],
@@ -56,6 +55,11 @@ async def upload_document(
     category: Annotated[DocumentCategory, Form()] = DocumentCategory.general,
     description: Annotated[str | None, Form()] = None,
 ) -> DocumentUploadResponse:
+    """Upload a PDF and immediately parse, chunk, embed, and index it.
+
+    The document is fully processed before this endpoint returns so the chatbot
+    can answer questions about it instantly.
+    """
     if category != DocumentCategory.general or current_profile.role != AppRole.employee:
         ensure_can_manage_document_category(current_profile.role, category)
 
@@ -64,14 +68,11 @@ async def upload_document(
         category=category,
         description=description,
         current_user=current_user,
-        process_immediately=False,
-    )
-    background_tasks.add_task(
-        service.parsing_service.reprocess_by_id,
-        str(result.document.id),
+        process_immediately=True,   # ← parse+chunk+embed+index synchronously
     )
 
     return DocumentUploadResponse(document=result.document, message=result.message)
+
 
 
 @router.get("", response_model=list[DocumentResponse])
