@@ -3,6 +3,7 @@ from pathlib import Path
 
 from supabase import Client
 
+from app.chunking.text_chunker import TextChunker
 from app.core.config import settings
 from app.embeddings.sentence_embedding_service import SentenceEmbeddingService
 from app.parsers.pdf_parser import PdfParserService
@@ -63,6 +64,10 @@ def build_document_parsing_service(client: Client) -> DocumentParsingService:
         storage_repository=StorageRepository(client),
         chunking_service=DocumentChunkingService(
             document_chunk_repository=chunk_repository,
+            text_chunker=TextChunker(
+                chunk_size=settings.chunk_size,
+                chunk_overlap=settings.chunk_overlap,
+            ),
         ),
         embedding_service=embedding_service,
         vector_index_service=vector_index_service,

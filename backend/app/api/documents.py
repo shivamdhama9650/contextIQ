@@ -1,3 +1,4 @@
+from datetime import UTC, datetime
 from typing import Annotated
 from uuid import UUID
 
@@ -56,8 +57,26 @@ def get_document_parsing_service() -> DocumentParsingService:
     return build_document_parsing_service(get_supabase_admin_client())
 
 
+def is_processing_stale(document: dict) -> bool:
+    updated_at = document.get("updated_at")
+    if not updated_at:
+        return True
+
+    try:
+        normalized = str(updated_at).replace("Z", "+00:00")
+        last_update = datetime.fromisoformat(normalized)
+        if last_update.tzinfo is None:
+            last_update = last_update.replace(tzinfo=UTC)
+    except ValueError:
+        return True
+
+    age_seconds = (datetime.now(UTC) - last_update.astimezone(UTC)).total_seconds()
+    return age_seconds > settings.processing_stale_minutes * 60
+
+
 @router.post("/upload", response_model=DocumentUploadResponse, status_code=201)
 async def upload_document(
+    background_tasks: BackgroundTasks,
     current_user: Annotated[AuthenticatedUser, Depends(get_current_user)],
     current_profile: Annotated[ProfileResponse, Depends(get_current_profile)],
     service: Annotated[DocumentUploadService, Depends(get_document_upload_service)],
@@ -65,11 +84,7 @@ async def upload_document(
     category: Annotated[DocumentCategory, Form()] = DocumentCategory.general,
     description: Annotated[str | None, Form()] = None,
 ) -> DocumentUploadResponse:
-    """Upload a PDF and immediately parse, chunk, embed, and index it.
-
-    The document is fully processed before this endpoint returns so the chatbot
-    can answer questions about it instantly.
-    """
+    """Upload a PDF quickly and queue document processing in the background."""
     if category != DocumentCategory.general or current_profile.role != AppRole.employee:
         ensure_can_manage_document_category(current_profile.role, category)
 
@@ -78,8 +93,9 @@ async def upload_document(
         category=category,
         description=description,
         current_user=current_user,
-        process_immediately=True,   # ← parse+chunk+embed+index synchronously
+        process_immediately=False,
     )
+    background_tasks.add_task(service.parsing_service.reprocess_by_id, str(result.document.id))
 
     return DocumentUploadResponse(document=result.document, message=result.message)
 
@@ -256,7 +272,11 @@ def process_document_async(
             message="Document is already ready for chat.",
         )
 
-    if document["status"] != DocumentStatus.processing.value:
+    should_start = document["status"] != DocumentStatus.processing.value or is_processing_stale(
+        document
+    )
+
+    if should_start:
         parsing_service.document_repository.update_status(
             str(document_id),
             DocumentStatus.processing,

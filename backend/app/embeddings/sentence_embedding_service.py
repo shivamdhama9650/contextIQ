@@ -48,6 +48,7 @@ class SentenceEmbeddingService:
         model = self._get_model()
         vectors = model.encode(
             texts,
+            batch_size=min(128, max(1, len(texts))),
             normalize_embeddings=True,
             show_progress_bar=False,
         )

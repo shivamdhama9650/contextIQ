@@ -24,7 +24,10 @@ class Settings(BaseSettings):
         default="sentence-transformers/all-MiniLM-L6-v2",
         alias="EMBEDDING_MODEL_NAME",
     )
-    embedding_batch_size: int = Field(default=32, alias="EMBEDDING_BATCH_SIZE")
+    embedding_batch_size: int = Field(default=96, alias="EMBEDDING_BATCH_SIZE")
+    chunk_size: int = Field(default=1800, alias="CHUNK_SIZE")
+    chunk_overlap: int = Field(default=120, alias="CHUNK_OVERLAP")
+    processing_stale_minutes: int = Field(default=10, alias="PROCESSING_STALE_MINUTES")
     chroma_persist_dir: str = Field(default="./chroma_data", alias="CHROMA_PERSIST_DIR")
     chroma_collection_name: str = Field(
         default="company_knowledge",
